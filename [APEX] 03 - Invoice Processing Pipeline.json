@@ -1,0 +1,642 @@
+{
+  "name": "[APEX] 03 - Invoice Processing Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## [APEX] 03 - Invoice Processing Pipeline\n\n**Purpose:** Monitors a dedicated Gmail label for incoming supplier invoices. Extracts data via Mindee OCR, matches supplier in Xero, creates draft ACCPAY bills with GST coding. Flags low-confidence extractions and unknown suppliers for human review.\n\n**Trigger:** Gmail polling every 5 minutes — label: `invoices`\n\n**Flow:**\n1. New email with attachment detected\n2. PDF sent to Mindee for OCR extraction\n3. Confidence check — below 85% goes to review queue\n4. Xero contact lookup — new supplier goes to review queue\n5. Draft ACCPAY bill created in Xero\n6. Logged to Airtable + Slack notification\n\n**Credentials to swap before activating:**\n- `GMAIL_CRED_ID` → Gmail OAuth2\n- `MINDEE_API_KEY` → Mindee API Token (header auth)\n- `XERO_CRED_ID` → Xero OAuth2\n- `AIRTABLE_CRED_ID` → Airtable Personal Access Token\n- `SLACK_CRED_ID` → Slack OAuth2\n\n**Placeholders to replace:**\n- `{{AIRTABLE_BASE_ID}}` → Airtable base ID\n- `{{DEFAULT_EXPENSE_ACCOUNT}}` → Xero account code (e.g. 310)\n- `{{INVOICES_LABEL_ID}}` → Gmail label ID for 'invoices' label (get from Gmail settings)\n\n⚠️ Mindee multipart binary upload requires the PDF attachment binary to be named `attachment_0` from Gmail trigger output.",
+        "height": 460,
+        "width": 760,
+        "color": 4
+      },
+      "id": "sticky-03",
+      "name": "Workflow Info",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        256,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "labelIds": [
+            "={{INVOICES_LABEL_ID}}"
+          ]
+        },
+        "options": {}
+      },
+      "id": "gmail-trig-03",
+      "name": "New Invoice Email",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [
+        256,
+        640
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CRED_ID",
+          "name": "Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-pdf",
+              "leftValue": "={{ Object.keys($binary || {}).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-03-haspdf",
+      "name": "Has PDF Attachment?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mindee.net/v1/products/mindee/invoices/v4/predict",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Token {{MINDEE_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "document",
+              "inputDataFieldName": "attachment_0"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-mindee-03",
+      "name": "Mindee OCR Extract",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        704,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d1",
+              "name": "supplier_name",
+              "value": "={{ $json.document.inference.prediction.supplier_name.value }}",
+              "type": "string"
+            },
+            {
+              "id": "d2",
+              "name": "invoice_number",
+              "value": "={{ $json.document.inference.prediction.invoice_number.value }}",
+              "type": "string"
+            },
+            {
+              "id": "d3",
+              "name": "invoice_date",
+              "value": "={{ $json.document.inference.prediction.date.value }}",
+              "type": "string"
+            },
+            {
+              "id": "d4",
+              "name": "total_amount",
+              "value": "={{ $json.document.inference.prediction.total_amount.value }}",
+              "type": "number"
+            },
+            {
+              "id": "d5",
+              "name": "total_tax",
+              "value": "={{ $json.document.inference.prediction.total_tax.value }}",
+              "type": "number"
+            },
+            {
+              "id": "d6",
+              "name": "minConfidence",
+              "value": "={{ Math.min($json.document.inference.prediction.supplier_name.confidence ?? 0, $json.document.inference.prediction.invoice_number.confidence ?? 0, $json.document.inference.prediction.total_amount.confidence ?? 0, $json.document.inference.prediction.date.confidence ?? 0) * 100 }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-03-parse",
+      "name": "Parse Mindee Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        912,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-conf",
+              "leftValue": "={{ $json.minConfidence }}",
+              "rightValue": 85,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-03-confidence",
+      "name": "Confidence Above 85%?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1136,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "contact",
+        "operation": "getAll",
+        "organizationId": "={{XERO_ORG_ID}}",
+        "limit": 1,
+        "options": {}
+      },
+      "id": "xero-03-search",
+      "name": "Search Contact by Name",
+      "type": "n8n-nodes-base.xero",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        384
+      ],
+      "credentials": {
+        "xeroOAuth2Api": {
+          "id": "XERO_CRED_ID",
+          "name": "Xero"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-sup",
+              "leftValue": "={{ $json.ContactID !== undefined && $json.ContactID !== null }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-03-supplier",
+      "name": "Supplier Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1584,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "organizationId": "={{XERO_ORG_ID}}",
+        "type": "ACCPAY",
+        "contactId": "={{ $('Search Contact by Name').item.json.ContactID }}",
+        "additionalFields": {
+          "dueDate": "={{ $('Parse Mindee Response').item.json.invoice_date }}",
+          "invoiceNumber": "={{ $('Parse Mindee Response').item.json.invoice_number }}",
+          "lineAmountType": "INCLUSIVE"
+        }
+      },
+      "id": "xero-03-bill",
+      "name": "Create Draft Bill",
+      "type": "n8n-nodes-base.xero",
+      "typeVersion": 1,
+      "position": [
+        1792,
+        256
+      ],
+      "credentials": {
+        "xeroOAuth2Api": {
+          "id": "XERO_CRED_ID",
+          "name": "Xero"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "={{AIRTABLE_BASE_ID}}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "INVOICE_LOG_TABLE_ID",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Supplier": "={{ $('Parse Mindee Response').item.json.supplier_name }}",
+            "InvoiceNumber": "={{ $('Parse Mindee Response').item.json.invoice_number }}",
+            "Amount": "={{ $('Parse Mindee Response').item.json.total_amount }}",
+            "GST": "={{ $('Parse Mindee Response').item.json.total_tax }}",
+            "ProcessedAt": "={{ $now.toISO() }}",
+            "XeroBillId": "={{ $('Create Draft Bill').item.json.InvoiceID }}",
+            "Confidence": "={{ $('Parse Mindee Response').item.json.minConfidence }}",
+            "Status": "Draft Created"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "at-03-log",
+      "name": "Log Processed Invoice",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        2016,
+        256
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "AIRTABLE_CRED_ID",
+          "name": "Airtable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "bookkeeping",
+          "mode": "name",
+          "cachedResultName": "#bookkeeping"
+        },
+        "text": "={{ '✓ Invoice processed: ' + $('Parse Mindee Response').item.json.supplier_name + ' — $' + $('Parse Mindee Response').item.json.total_amount + ' — Draft bill created in Xero. Confidence: ' + Math.round($('Parse Mindee Response').item.json.minConfidence) + '%' }}",
+        "otherOptions": {}
+      },
+      "id": "slack-03-ok",
+      "name": "Notify Bookkeeper",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        2240,
+        256
+      ],
+      "webhookId": "dfbe6a93-95ac-46c5-b57f-cad2cdabced5"
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "={{AIRTABLE_BASE_ID}}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "INVOICE_REVIEW_QUEUE_TABLE_ID",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Supplier": "={{ $json.supplier_name }}",
+            "InvoiceNumber": "={{ $json.invoice_number }}",
+            "Amount": "={{ $json.total_amount }}",
+            "GST": "={{ $json.total_tax }}",
+            "Confidence": "={{ $json.minConfidence }}",
+            "ReviewReason": "Low OCR confidence — manual verification required",
+            "FlaggedAt": "={{ $now.toISO() }}",
+            "Status": "Pending Review"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "at-03-review-lowconf",
+      "name": "Flag for Review - Low Confidence",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        1360,
+        656
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "AIRTABLE_CRED_ID",
+          "name": "Airtable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "bookkeeping",
+          "mode": "name",
+          "cachedResultName": "#bookkeeping"
+        },
+        "text": "={{ '⚠️ Invoice needs review (low confidence: ' + Math.round($('Parse Mindee Response').item.json.minConfidence) + '%)\nSupplier: ' + $('Parse Mindee Response').item.json.supplier_name + '\nAmount: $' + $('Parse Mindee Response').item.json.total_amount + '\nReason: OCR confidence below 85% — manual verification required.' }}",
+        "otherOptions": {}
+      },
+      "id": "slack-03-review-lowconf",
+      "name": "Alert Bookkeeper - Low Confidence",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        1584,
+        656
+      ],
+      "webhookId": "cfce8a43-c9fe-403c-8a68-29fa04881901"
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "={{AIRTABLE_BASE_ID}}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "INVOICE_REVIEW_QUEUE_TABLE_ID",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Supplier": "={{ $('Parse Mindee Response').item.json.supplier_name }}",
+            "InvoiceNumber": "={{ $('Parse Mindee Response').item.json.invoice_number }}",
+            "Amount": "={{ $('Parse Mindee Response').item.json.total_amount }}",
+            "GST": "={{ $('Parse Mindee Response').item.json.total_tax }}",
+            "Confidence": "={{ $('Parse Mindee Response').item.json.minConfidence }}",
+            "ReviewReason": "New supplier — not found in Xero. Create contact first.",
+            "FlaggedAt": "={{ $now.toISO() }}",
+            "Status": "Pending Review"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "at-03-review-newsup",
+      "name": "Flag for Review - New Supplier",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        1792,
+        512
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "AIRTABLE_CRED_ID",
+          "name": "Airtable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "bookkeeping",
+          "mode": "name",
+          "cachedResultName": "#bookkeeping"
+        },
+        "text": "={{ '⚠️ Invoice needs review (new supplier)\nSupplier: ' + $('Parse Mindee Response').item.json.supplier_name + '\nAmount: $' + $('Parse Mindee Response').item.json.total_amount + '\nReason: Supplier not found in Xero. Create contact first, then re-process.' }}",
+        "otherOptions": {}
+      },
+      "id": "slack-03-review-newsup",
+      "name": "Alert Bookkeeper - New Supplier",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        2016,
+        512
+      ],
+      "webhookId": "e46c6c1c-3aad-475a-abaa-e64a399a8209"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "New Invoice Email": {
+      "main": [
+        [
+          {
+            "node": "Has PDF Attachment?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has PDF Attachment?": {
+      "main": [
+        [
+          {
+            "node": "Mindee OCR Extract",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Mindee OCR Extract": {
+      "main": [
+        [
+          {
+            "node": "Parse Mindee Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Mindee Response": {
+      "main": [
+        [
+          {
+            "node": "Confidence Above 85%?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confidence Above 85%?": {
+      "main": [
+        [
+          {
+            "node": "Search Contact by Name",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Flag for Review - Low Confidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Contact by Name": {
+      "main": [
+        [
+          {
+            "node": "Supplier Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supplier Found?": {
+      "main": [
+        [
+          {
+            "node": "Create Draft Bill",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Flag for Review - New Supplier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Draft Bill": {
+      "main": [
+        [
+          {
+            "node": "Log Processed Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Processed Invoice": {
+      "main": [
+        [
+          {
+            "node": "Notify Bookkeeper",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag for Review - Low Confidence": {
+      "main": [
+        [
+          {
+            "node": "Alert Bookkeeper - Low Confidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag for Review - New Supplier": {
+      "main": [
+        [
+          {
+            "node": "Alert Bookkeeper - New Supplier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "f80d7748-1cc1-4bcc-b433-5293ad864b5a",
+  "meta": {
+    "instanceId": "7ced4288e0a77f50a09c54c29f3347ae52e6300528ae434403d37065e9222860"
+  },
+  "id": "p9YTMNZhd0UdD52K",
+  "tags": []
+}

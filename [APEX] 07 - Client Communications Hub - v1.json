@@ -1,0 +1,563 @@
+{
+  "name": "[APEX] 07 - Client Communications Hub - v1",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours"
+            }
+          ]
+        }
+      },
+      "id": "wf07-node-01",
+      "name": "Hourly Appointment Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "wf07-node-02",
+      "name": "Daily Deadline Scan",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "apex-milestone-notification",
+        "options": {}
+      },
+      "id": "wf07-node-03",
+      "name": "Milestone Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        608
+      ],
+      "webhookId": "4312402e-fbc6-47ce-8c78-ccbbac3c9bdf"
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "mode": "id",
+          "value": "={{AIRTABLE_BASE_ID}}"
+        },
+        "table": {
+          "mode": "id",
+          "value": "APPOINTMENTS_TABLE_ID"
+        },
+        "filterByFormula": "AND(IS_AFTER({AppointmentDateTime}, NOW()), IS_BEFORE({AppointmentDateTime}, DATEADD(NOW(), 48, 'hours')))",
+        "options": {}
+      },
+      "id": "wf07-node-04",
+      "name": "Fetch Upcoming Appointments",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        288,
+        0
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "airtable_cred",
+          "name": "Airtable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "mode": "id",
+          "value": "={{AIRTABLE_BASE_ID}}"
+        },
+        "table": {
+          "mode": "id",
+          "value": "DEADLINES_TABLE_ID"
+        },
+        "filterByFormula": "AND(IS_AFTER({DeadlineDate}, TODAY()), IS_BEFORE({DeadlineDate}, DATEADD(TODAY(), 7, 'days')))",
+        "options": {}
+      },
+      "id": "wf07-node-05",
+      "name": "Fetch Upcoming Deadlines",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        288,
+        304
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "airtable_cred",
+          "name": "Airtable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "notificationType",
+              "value": "appointment_reminder",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "clientName",
+              "value": "={{ $json.ClientName }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "clientPhone",
+              "value": "={{ $json.ClientPhone }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "clientEmail",
+              "value": "={{ $json.ClientEmail }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "matterRef",
+              "value": "={{ $json.MatterRef }}",
+              "type": "string"
+            },
+            {
+              "id": "a6",
+              "name": "appointmentDateTime",
+              "value": "={{ $json.AppointmentDateTime }}",
+              "type": "string"
+            },
+            {
+              "id": "a7",
+              "name": "smsBody",
+              "value": "=Hi {{ $json.ClientName }}, reminder from FIRM_NAME: appointment on {{ $json.AppointmentDateTime }} (ref: {{ $json.MatterRef }}). To reschedule call FIRM_PHONE.",
+              "type": "string"
+            },
+            {
+              "id": "a8",
+              "name": "emailSubject",
+              "value": "=Appointment Reminder — {{ $json.AppointmentDateTime }}",
+              "type": "string"
+            },
+            {
+              "id": "a9",
+              "name": "emailBody",
+              "value": "=Dear {{ $json.ClientName }},\n\nThis is a reminder of your upcoming appointment:\n\nDate/Time: {{ $json.AppointmentDateTime }}\nMatter Reference: {{ $json.MatterRef }}\n\nTo reschedule please contact us at FIRM_PHONE or FIRM_EMAIL.\n\nKind regards,\nFIRM_NAME",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf07-node-06",
+      "name": "Format Appointment Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b1",
+              "name": "notificationType",
+              "value": "deadline_alert",
+              "type": "string"
+            },
+            {
+              "id": "b2",
+              "name": "clientName",
+              "value": "={{ $json.ClientName }}",
+              "type": "string"
+            },
+            {
+              "id": "b3",
+              "name": "clientPhone",
+              "value": "={{ $json.ClientPhone }}",
+              "type": "string"
+            },
+            {
+              "id": "b4",
+              "name": "clientEmail",
+              "value": "={{ $json.ClientEmail }}",
+              "type": "string"
+            },
+            {
+              "id": "b5",
+              "name": "matterRef",
+              "value": "={{ $json.MatterRef }}",
+              "type": "string"
+            },
+            {
+              "id": "b6",
+              "name": "deadlineDate",
+              "value": "={{ $json.DeadlineDate }}",
+              "type": "string"
+            },
+            {
+              "id": "b7",
+              "name": "deadlineType",
+              "value": "={{ $json.DeadlineType }}",
+              "type": "string"
+            },
+            {
+              "id": "b8",
+              "name": "smsBody",
+              "value": "=Hi {{ $json.ClientName }}, FIRM_NAME: {{ $json.DeadlineType }} deadline on {{ $json.DeadlineDate }} for matter {{ $json.MatterRef }}. Call FIRM_PHONE with questions.",
+              "type": "string"
+            },
+            {
+              "id": "b9",
+              "name": "emailSubject",
+              "value": "=Upcoming Deadline: {{ $json.DeadlineType }} — {{ $json.DeadlineDate }}",
+              "type": "string"
+            },
+            {
+              "id": "b10",
+              "name": "emailBody",
+              "value": "=Dear {{ $json.ClientName }},\n\nA deadline is approaching on your matter:\n\nDeadline Type: {{ $json.DeadlineType }}\nDue Date: {{ $json.DeadlineDate }}\nMatter Reference: {{ $json.MatterRef }}\n\nPlease contact us at FIRM_PHONE if you need to take any action.\n\nKind regards,\nFIRM_NAME",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf07-node-07",
+      "name": "Format Deadline Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        560,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c1",
+              "name": "notificationType",
+              "value": "milestone_notification",
+              "type": "string"
+            },
+            {
+              "id": "c2",
+              "name": "clientName",
+              "value": "={{ $json.body.clientName }}",
+              "type": "string"
+            },
+            {
+              "id": "c3",
+              "name": "clientPhone",
+              "value": "={{ $json.body.clientPhone }}",
+              "type": "string"
+            },
+            {
+              "id": "c4",
+              "name": "clientEmail",
+              "value": "={{ $json.body.clientEmail }}",
+              "type": "string"
+            },
+            {
+              "id": "c5",
+              "name": "matterRef",
+              "value": "={{ $json.body.matterRef }}",
+              "type": "string"
+            },
+            {
+              "id": "c6",
+              "name": "milestoneTitle",
+              "value": "={{ $json.body.milestoneTitle }}",
+              "type": "string"
+            },
+            {
+              "id": "c7",
+              "name": "milestoneDetails",
+              "value": "={{ $json.body.milestoneDetails }}",
+              "type": "string"
+            },
+            {
+              "id": "c8",
+              "name": "smsBody",
+              "value": "=Hi {{ $json.body.clientName }}, update from FIRM_NAME on matter {{ $json.body.matterRef }}: {{ $json.body.milestoneTitle }}. Call FIRM_PHONE for details.",
+              "type": "string"
+            },
+            {
+              "id": "c9",
+              "name": "emailSubject",
+              "value": "=Matter Update: {{ $json.body.milestoneTitle }} — {{ $json.body.matterRef }}",
+              "type": "string"
+            },
+            {
+              "id": "c10",
+              "name": "emailBody",
+              "value": "=Dear {{ $json.body.clientName }},\n\nWe have an update on your matter {{ $json.body.matterRef }}:\n\n{{ $json.body.milestoneTitle }}\n\n{{ $json.body.milestoneDetails }}\n\nPlease do not hesitate to contact us at FIRM_PHONE if you have any questions.\n\nKind regards,\nFIRM_NAME",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf07-node-08",
+      "name": "Format Milestone Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        288,
+        608
+      ]
+    },
+    {
+      "parameters": {
+        "from": "+TWILIO_FROM_NUMBER_PLACEHOLDER",
+        "to": "={{ $json.clientPhone }}",
+        "message": "={{ $json.smsBody }}",
+        "options": {}
+      },
+      "id": "wf07-node-09",
+      "name": "Send SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        1168,
+        64
+      ],
+      "credentials": {
+        "twilioApi": {
+          "id": "twilio_cred",
+          "name": "Twilio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.clientEmail }}",
+        "subject": "={{ $json.emailSubject }}",
+        "message": "={{ $json.emailBody }}",
+        "options": {}
+      },
+      "id": "wf07-node-10",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        960,
+        544
+      ],
+      "webhookId": "e96b76b5-6f5e-4576-b007-f8684eb83055",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail_cred",
+          "name": "Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "mode": "id",
+          "value": "={{AIRTABLE_BASE_ID}}"
+        },
+        "table": {
+          "mode": "id",
+          "value": "COMMS_LOG_TABLE_ID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ClientName": "={{ $json.clientName }}",
+            "NotificationType": "={{ $json.notificationType }}",
+            "MatterRef": "={{ $json.matterRef }}",
+            "SentAt": "={{ $now.toISO() }}",
+            "Channel": "SMS + Email",
+            "Status": "Sent"
+          }
+        },
+        "options": {}
+      },
+      "id": "wf07-node-11",
+      "name": "Log Communication",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        1168,
+        304
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "airtable_cred",
+          "name": "Airtable"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Hourly Appointment Check": {
+      "main": [
+        [
+          {
+            "node": "Fetch Upcoming Appointments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Deadline Scan": {
+      "main": [
+        [
+          {
+            "node": "Fetch Upcoming Deadlines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Milestone Webhook": {
+      "main": [
+        [
+          {
+            "node": "Format Milestone Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Upcoming Appointments": {
+      "main": [
+        [
+          {
+            "node": "Format Appointment Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Upcoming Deadlines": {
+      "main": [
+        [
+          {
+            "node": "Format Deadline Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Appointment Alert": {
+      "main": [
+        [
+          {
+            "node": "Send SMS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Communication",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Deadline Alert": {
+      "main": [
+        [
+          {
+            "node": "Send SMS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Communication",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Milestone Alert": {
+      "main": [
+        [
+          {
+            "node": "Send SMS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Communication",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Australia/Melbourne",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "e643fe61-8086-4157-8b91-1922794f008e",
+  "meta": {
+    "instanceId": "7ced4288e0a77f50a09c54c29f3347ae52e6300528ae434403d37065e9222860"
+  },
+  "id": "cSzJDeDStf0h9LXG",
+  "tags": []
+}

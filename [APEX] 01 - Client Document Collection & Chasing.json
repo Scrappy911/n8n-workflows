@@ -1,0 +1,711 @@
+{
+  "name": "[APEX] 01 - Client Document Collection & Chasing",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## [APEX] 01 - Client Document Collection & Chasing\n\n**Purpose:** When a job reaches 'awaiting client documents' status, send the client a document request email, then escalating reminders at Day 3, Day 7, and Day 14 if documents haven't been uploaded. All activity logged to Airtable.\n\n**Trigger:** POST to /webhook/doc-collection-start\n\n**Payload:** `{ clientId, clientName, clientEmail, engagementType, jobId, documentsRequired[] }`\n\n**Credentials to swap before activating:**\n- `AIRTABLE_CRED_ID` → Airtable Personal Access Token\n- `GMAIL_CRED_ID` → Gmail OAuth2\n\n**Placeholders to replace:**\n- `{{AIRTABLE_BASE_ID}}` → Your Airtable base ID\n- `{{UPLOAD_LINK}}` → Document upload portal URL\n- `{{PARTNER_EMAIL}}` → Engagement partner email",
+        "height": 628,
+        "width": 680,
+        "color": 5
+      },
+      "id": "sticky-01",
+      "name": "Workflow Info",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        176,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "doc-collection-start",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-01",
+      "name": "Receive Doc Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        256,
+        528
+      ],
+      "webhookId": "9a2a7344-b4b6-4f34-9807-093973f5c9f4"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "clientId",
+              "value": "={{ $json.body.clientId }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "clientName",
+              "value": "={{ $json.body.clientName }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "clientEmail",
+              "value": "={{ $json.body.clientEmail }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "engagementType",
+              "value": "={{ $json.body.engagementType }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "jobId",
+              "value": "={{ $json.body.jobId }}",
+              "type": "string"
+            },
+            {
+              "id": "a6",
+              "name": "checklistHtml",
+              "value": "={{ '<ul>' + $json.body.documentsRequired.map(d => '<li>' + d + '</li>').join('') + '</ul>' }}",
+              "type": "string"
+            },
+            {
+              "id": "a7",
+              "name": "documentsList",
+              "value": "={{ $json.body.documentsRequired.join(', ') }}",
+              "type": "string"
+            },
+            {
+              "id": "a8",
+              "name": "requestedAt",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-01",
+      "name": "Prepare Checklist",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        480,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "={{AIRTABLE_BASE_ID}}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "DOCUMENT_REQUESTS_TABLE_ID",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ClientName": "={{ $json.clientName }}",
+            "ClientEmail": "={{ $json.clientEmail }}",
+            "EngagementType": "={{ $json.engagementType }}",
+            "JobId": "={{ $json.jobId }}",
+            "Status": "Pending",
+            "RequestedAt": "={{ $json.requestedAt }}",
+            "DocumentsList": "={{ $json.documentsList }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "at-log-01",
+      "name": "Log Request",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        704,
+        528
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "AIRTABLE_CRED_ID",
+          "name": "Airtable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Prepare Checklist').item.json.clientEmail }}",
+        "subject": "={{ 'Documents needed for your ' + $('Prepare Checklist').item.json.engagementType }}",
+        "message": "={{ '<p>Dear ' + $('Prepare Checklist').item.json.clientName + ',</p><p>Thank you for engaging our services. To proceed with your <strong>' + $('Prepare Checklist').item.json.engagementType + '</strong>, we require the following documents:</p>' + $('Prepare Checklist').item.json.checklistHtml + '<p>Please upload your documents here: <a href=\"UPLOAD_LINK_PLACEHOLDER\">Upload Documents</a></p><p>Kind regards,<br/>The Team</p>' }}",
+        "options": {}
+      },
+      "id": "gmail-initial-01",
+      "name": "Send Initial Request",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        912,
+        528
+      ],
+      "webhookId": "762d7a81-9c50-4d36-90d2-004b7bb00b7f",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CRED_ID",
+          "name": "Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 3,
+        "unit": "days"
+      },
+      "id": "wait-3d-01",
+      "name": "Wait 3 Days",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1136,
+        528
+      ],
+      "webhookId": "af67ae2e-f4d0-499c-a098-420a0b2f1b96"
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "={{AIRTABLE_BASE_ID}}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "DOCUMENT_REQUESTS_TABLE_ID",
+          "mode": "id"
+        },
+        "filterByFormula": "={{ '{JobId} = \"' + $('Prepare Checklist').item.json.jobId + '\"' }}",
+        "options": {}
+      },
+      "id": "at-check3-01",
+      "name": "Check Status Day 3",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        1360,
+        528
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "AIRTABLE_CRED_ID",
+          "name": "Airtable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-3",
+              "leftValue": "={{ $json.fields.Status }}",
+              "rightValue": "Pending",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-3-01",
+      "name": "Still Pending Day 3?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1584,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Prepare Checklist').item.json.clientEmail }}",
+        "subject": "={{ 'Reminder: Documents still needed — ' + $('Prepare Checklist').item.json.engagementType }}",
+        "message": "={{ '<p>Dear ' + $('Prepare Checklist').item.json.clientName + ',</p><p>This is a friendly reminder that we are still awaiting the documents for your <strong>' + $('Prepare Checklist').item.json.engagementType + '</strong>.</p>' + $('Prepare Checklist').item.json.checklistHtml + '<p>Please upload here: <a href=\"UPLOAD_LINK_PLACEHOLDER\">Upload Documents</a></p><p>Kind regards,<br/>The Team</p>' }}",
+        "options": {}
+      },
+      "id": "gmail-r3-01",
+      "name": "Reminder Day 3",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1792,
+        400
+      ],
+      "webhookId": "8160f874-b9fa-442d-94bb-52fe12955c31",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CRED_ID",
+          "name": "Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 4,
+        "unit": "days"
+      },
+      "id": "wait-4d-01",
+      "name": "Wait 4 More Days",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2016,
+        400
+      ],
+      "webhookId": "d59e2f9b-51c7-49b8-8a94-70d092bcaf68"
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "={{AIRTABLE_BASE_ID}}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "DOCUMENT_REQUESTS_TABLE_ID",
+          "mode": "id"
+        },
+        "filterByFormula": "={{ '{JobId} = \"' + $('Prepare Checklist').item.json.jobId + '\"' }}",
+        "options": {}
+      },
+      "id": "at-check7-01",
+      "name": "Check Status Day 7",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        2240,
+        400
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "AIRTABLE_CRED_ID",
+          "name": "Airtable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-7",
+              "leftValue": "={{ $json.fields.Status }}",
+              "rightValue": "Pending",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-7-01",
+      "name": "Still Pending Day 7?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2464,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Prepare Checklist').item.json.clientEmail }}",
+        "subject": "={{ 'IMPORTANT: Documents overdue — ' + $('Prepare Checklist').item.json.engagementType }}",
+        "message": "={{ '<p>Dear ' + $('Prepare Checklist').item.json.clientName + ',</p><p>We note that documents for your <strong>' + $('Prepare Checklist').item.json.engagementType + '</strong> are now <strong>7 days overdue</strong>. This may impact your engagement timeline.</p>' + $('Prepare Checklist').item.json.checklistHtml + '<p>Please upload urgently: <a href=\"UPLOAD_LINK_PLACEHOLDER\">Upload Documents</a></p><p>Kind regards,<br/>The Team</p>' }}",
+        "options": {}
+      },
+      "id": "gmail-r7-01",
+      "name": "Reminder Day 7",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2672,
+        400
+      ],
+      "webhookId": "7962c170-6f20-4bc1-911a-f8024b80f255",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CRED_ID",
+          "name": "Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 7,
+        "unit": "days"
+      },
+      "id": "wait-7d-01",
+      "name": "Wait 7 More Days",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2896,
+        400
+      ],
+      "webhookId": "9bb747ef-e49b-4c85-9d41-6508b8e78c6f"
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "={{AIRTABLE_BASE_ID}}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "DOCUMENT_REQUESTS_TABLE_ID",
+          "mode": "id"
+        },
+        "filterByFormula": "={{ '{JobId} = \"' + $('Prepare Checklist').item.json.jobId + '\"' }}",
+        "options": {}
+      },
+      "id": "at-check14-01",
+      "name": "Check Status Day 14",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        3120,
+        400
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "AIRTABLE_CRED_ID",
+          "name": "Airtable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-14",
+              "leftValue": "={{ $json.fields.Status }}",
+              "rightValue": "Pending",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-14-01",
+      "name": "Still Pending Day 14?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3344,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Prepare Checklist').item.json.clientEmail }}",
+        "subject": "={{ 'Final Notice: Documents required — ' + $('Prepare Checklist').item.json.engagementType }}",
+        "message": "={{ '<p>Dear ' + $('Prepare Checklist').item.json.clientName + ',</p><p>Despite our previous reminders, we have not yet received the documents required for your <strong>' + $('Prepare Checklist').item.json.engagementType + '</strong>.</p>' + $('Prepare Checklist').item.json.checklistHtml + '<p>This is our final notice. Please upload immediately: <a href=\"UPLOAD_LINK_PLACEHOLDER\">Upload Documents</a></p><p>Your file has been referred to the engagement partner for review.</p><p>Kind regards,<br/>The Team</p>' }}",
+        "options": {
+          "ccList": "PARTNER_EMAIL_PLACEHOLDER"
+        }
+      },
+      "id": "gmail-esc-01",
+      "name": "Final Escalation",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3552,
+        400
+      ],
+      "webhookId": "037fae1f-a5fb-441a-a6c8-61a0b6853ee7",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CRED_ID",
+          "name": "Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "base": {
+          "__rl": true,
+          "value": "={{AIRTABLE_BASE_ID}}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "DOCUMENT_REQUESTS_TABLE_ID",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Status": "Escalated",
+            "EscalatedAt": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "at-escalated-01",
+      "name": "Update Status Escalated",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        3776,
+        400
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "AIRTABLE_CRED_ID",
+          "name": "Airtable"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Receive Doc Request": {
+      "main": [
+        [
+          {
+            "node": "Prepare Checklist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Checklist": {
+      "main": [
+        [
+          {
+            "node": "Log Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Request": {
+      "main": [
+        [
+          {
+            "node": "Send Initial Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Initial Request": {
+      "main": [
+        [
+          {
+            "node": "Wait 3 Days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 3 Days": {
+      "main": [
+        [
+          {
+            "node": "Check Status Day 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Status Day 3": {
+      "main": [
+        [
+          {
+            "node": "Still Pending Day 3?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still Pending Day 3?": {
+      "main": [
+        [
+          {
+            "node": "Reminder Day 3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Reminder Day 3": {
+      "main": [
+        [
+          {
+            "node": "Wait 4 More Days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 4 More Days": {
+      "main": [
+        [
+          {
+            "node": "Check Status Day 7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Status Day 7": {
+      "main": [
+        [
+          {
+            "node": "Still Pending Day 7?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still Pending Day 7?": {
+      "main": [
+        [
+          {
+            "node": "Reminder Day 7",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Reminder Day 7": {
+      "main": [
+        [
+          {
+            "node": "Wait 7 More Days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 7 More Days": {
+      "main": [
+        [
+          {
+            "node": "Check Status Day 14",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Status Day 14": {
+      "main": [
+        [
+          {
+            "node": "Still Pending Day 14?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still Pending Day 14?": {
+      "main": [
+        [
+          {
+            "node": "Final Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Final Escalation": {
+      "main": [
+        [
+          {
+            "node": "Update Status Escalated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "b687833e-630a-4cfc-8646-288d61db7d0a",
+  "meta": {
+    "instanceId": "7ced4288e0a77f50a09c54c29f3347ae52e6300528ae434403d37065e9222860"
+  },
+  "id": "wtvKOhEeEvU9PGSo",
+  "tags": []
+}

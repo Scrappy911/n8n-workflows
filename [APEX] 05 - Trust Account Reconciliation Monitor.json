@@ -1,0 +1,548 @@
+{
+  "name": "[APEX] 05 - Trust Account Reconciliation Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## [APEX] 05 - Trust Account Reconciliation Monitor\n\n**Purpose:** Daily automated three-way trust account reconciliation. Compares trust bank balance vs sum of client ledgers vs trust creditors. Immediately alerts on variance > $1.00, negative client ledger balances, or unusual transactions. Generates monthly compliance report.\n\n**Trigger:** Daily cron at 08:00 AEST\n\n**Parallel checks from reconciliation output:**\n- Variance > $1 → Slack URGENT + Gmail to trust supervisor\n- Negative ledger balances → Slack alert\n- Daily log → Google Sheets → monthly report on 1st of each month\n\n**Credentials to swap before activating:**\n- `LEAP_CRED_ID` → LEAP API (HTTP Header Auth with Bearer token)\n- `SLACK_CRED_ID` → Slack OAuth2\n- `GMAIL_CRED_ID` → Gmail OAuth2\n- `GOOGLE_SHEETS_CRED_ID` → Google Sheets OAuth2\n\n**Placeholders to replace:**\n- `{{LEAP_API_BASE}}` → Your LEAP API base URL (e.g. https://api.leap.com.au/v1)\n- `{{LEAP_API_KEY}}` → LEAP API Bearer token\n- `{{TRUST_LOG_SHEET_ID}}` → Google Sheet ID for daily trust log\n- `{{TRUST_SUPERVISOR_EMAIL}}` → Trust supervisor email address\n- `{{PARTNER_EMAIL}}` → Managing partner email for monthly reports\n\n⚠️ This workflow is compliance insurance — it does NOT replace formal trust audits required by your state Law Society.",
+        "height": 420,
+        "width": 760
+      },
+      "id": "sticky-05",
+      "name": "Workflow Info",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        256,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron-05",
+      "name": "Daily Trust Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        256,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://LEAP_API_BASE_URL/trustaccounts/balance",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer LEAP_API_KEY_PLACEHOLDER"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "http-05-balance",
+      "name": "Get Trust Bank Balance",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://LEAP_API_BASE_URL/trustaccounts/client-ledgers",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer LEAP_API_KEY_PLACEHOLDER"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "http-05-ledgers",
+      "name": "Get Client Trust Ledgers",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        704,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://LEAP_API_BASE_URL/trustaccounts/creditors",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer LEAP_API_KEY_PLACEHOLDER"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "http-05-creditors",
+      "name": "Get Trust Creditors",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        912,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const bankBalance = parseFloat($('Get Trust Bank Balance').item.json.balance ?? 0);\nconst clientLedgers = $('Get Client Trust Ledgers').item.json.clientLedgers ?? [];\nconst creditors = $('Get Trust Creditors').item.json.creditors ?? [];\n\nconst clientLedgersSum = clientLedgers.reduce((sum, l) => sum + parseFloat(l.balance ?? 0), 0);\nconst creditorsSum = creditors.reduce((sum, c) => sum + parseFloat(c.amount ?? 0), 0);\nconst variance = Math.abs(bankBalance - clientLedgersSum - creditorsSum);\nconst isReconciled = variance <= 1.00;\n\nconst negativeBalances = clientLedgers\n  .filter(l => parseFloat(l.balance ?? 0) < 0)\n  .map(l => ({ clientName: l.clientName ?? l.name ?? 'Unknown', balance: parseFloat(l.balance ?? 0) }));\n\nconst recentTx = $('Get Trust Bank Balance').item.json.recentTransactions ?? [];\nconst unusualTransactions = recentTx.filter(t => {\n  const amount = Math.abs(parseFloat(t.amount ?? 0));\n  const day = new Date(t.date ?? t.transactionDate ?? Date.now()).getDay();\n  return amount >= 10000 || day === 0 || day === 6;\n});\n\nreturn [{\n  json: {\n    bankBalance: Math.round(bankBalance * 100) / 100,\n    clientLedgersSum: Math.round(clientLedgersSum * 100) / 100,\n    creditorsSum: Math.round(creditorsSum * 100) / 100,\n    variance: Math.round(variance * 100) / 100,\n    isReconciled,\n    negativeBalances,\n    negativeBalancesCount: negativeBalances.length,\n    unusualTransactionsCount: unusualTransactions.length,\n    checkDate: new Date().toISOString().split('T')[0]\n  }\n}];"
+      },
+      "id": "code-05-recon",
+      "name": "Three-Way Reconciliation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1136,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-var",
+              "leftValue": "={{ $json.variance }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-05-variance",
+      "name": "Variance Exceeds Threshold?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1360,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "trust-compliance",
+          "mode": "name",
+          "cachedResultName": "#trust-compliance"
+        },
+        "text": "={{ '🚨 TRUST ACCOUNT VARIANCE DETECTED\nDate: ' + $json.checkDate + '\nBank Balance: $' + $json.bankBalance + '\nClient Ledgers Sum: $' + $json.clientLedgersSum + '\nCreditors Sum: $' + $json.creditorsSum + '\nVariance: $' + $json.variance + '\n\nImmediate review required. Do not make further trust transfers until resolved.' }}",
+        "otherOptions": {}
+      },
+      "id": "slack-05-variance",
+      "name": "URGENT Alert - Trust Variance",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        1584,
+        272
+      ],
+      "webhookId": "b46c67bc-bce9-41a4-aa3c-c92ce83982d3"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{TRUST_SUPERVISOR_EMAIL}}",
+        "subject": "={{ 'URGENT: Trust Account Variance Detected — ' + $('Three-Way Reconciliation').item.json.checkDate }}",
+        "message": "={{ '<p><strong style=\"color:red\">URGENT: Trust Account Variance Detected</strong></p><table border=\"1\" cellpadding=\"8\" cellspacing=\"0\"><tr><td>Date</td><td>' + $('Three-Way Reconciliation').item.json.checkDate + '</td></tr><tr><td>Bank Balance</td><td>$' + $('Three-Way Reconciliation').item.json.bankBalance + '</td></tr><tr><td>Client Ledgers Sum</td><td>$' + $('Three-Way Reconciliation').item.json.clientLedgersSum + '</td></tr><tr><td>Creditors Sum</td><td>$' + $('Three-Way Reconciliation').item.json.creditorsSum + '</td></tr><tr><td><strong>Variance</strong></td><td><strong style=\"color:red\">$' + $('Three-Way Reconciliation').item.json.variance + '</strong></td></tr></table><p>Please investigate immediately. Do not make further trust transfers until the variance is resolved.</p>' }}",
+        "options": {}
+      },
+      "id": "gmail-05-supervisor",
+      "name": "Urgent Email to Trust Supervisor",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1792,
+        272
+      ],
+      "webhookId": "1a94f4c8-98f7-4f98-a34c-2d68ee04ea19",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CRED_ID",
+          "name": "Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-neg",
+              "leftValue": "={{ $json.negativeBalancesCount }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-05-negative",
+      "name": "Any Negative Balances?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1360,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "trust-compliance",
+          "mode": "name",
+          "cachedResultName": "#trust-compliance"
+        },
+        "text": "={{ '⚠️ NEGATIVE CLIENT TRUST LEDGER BALANCE\nDate: ' + $json.checkDate + '\nClients with negative balances: ' + $json.negativeBalancesCount + '\n\nDetails:\n' + $json.negativeBalances.map(b => '• ' + b.clientName + ': $' + b.balance).join('\n') + '\n\nReview trust ledgers immediately.' }}",
+        "otherOptions": {}
+      },
+      "id": "slack-05-negative",
+      "name": "Alert - Negative Ledger Balance",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        1584,
+        624
+      ],
+      "webhookId": "b8b4c01f-d758-4f05-b92d-762dce7cf43d"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{TRUST_LOG_SHEET_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Daily Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $json.checkDate }}",
+            "BankBalance": "={{ $json.bankBalance }}",
+            "LedgersSum": "={{ $json.clientLedgersSum }}",
+            "CreditorsSum": "={{ $json.creditorsSum }}",
+            "Variance": "={{ $json.variance }}",
+            "IsReconciled": "={{ $json.isReconciled }}",
+            "NegativeBalances": "={{ $json.negativeBalancesCount }}",
+            "UnusualTransactions": "={{ $json.unusualTransactionsCount }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "gs-05-log",
+      "name": "Log Daily Reconciliation",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        1360,
+        832
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CRED_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-firstday",
+              "leftValue": "={{ new Date().getDate() }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-05-firstday",
+      "name": "Is First Day of Month?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1584,
+        832
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('Three-Way Reconciliation').item.json;\nconst now = new Date();\nconst prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)\n  .toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });\n\nconst statusColour = data.isReconciled ? '#27ae60' : '#e74c3c';\nconst statusText = data.isReconciled ? '✓ RECONCILED' : '⚠ VARIANCE DETECTED';\n\nconst reportHtml = `\n<html><body style=\"font-family:Arial,sans-serif;max-width:700px;margin:0 auto;\">\n<h1 style=\"color:#2c3e50;\">Trust Account Reconciliation Report</h1>\n<h2 style=\"color:#7f8c8d;\">${prevMonth}</h2>\n<p>Generated: ${now.toLocaleDateString('en-AU')}</p>\n<table border=\"1\" cellpadding=\"10\" cellspacing=\"0\" style=\"border-collapse:collapse;width:100%;\">\n  <tr style=\"background:#ecf0f1;\"><th>Metric</th><th>Value</th></tr>\n  <tr><td>Trust Bank Balance</td><td>$${data.bankBalance?.toLocaleString('en-AU', {minimumFractionDigits:2})}</td></tr>\n  <tr><td>Sum of Client Ledgers</td><td>$${data.clientLedgersSum?.toLocaleString('en-AU', {minimumFractionDigits:2})}</td></tr>\n  <tr><td>Sum of Trust Creditors</td><td>$${data.creditorsSum?.toLocaleString('en-AU', {minimumFractionDigits:2})}</td></tr>\n  <tr><td><strong>Variance</strong></td><td><strong>$${data.variance?.toFixed(2)}</strong></td></tr>\n  <tr><td>Status</td><td style=\"color:${statusColour};\"><strong>${statusText}</strong></td></tr>\n  <tr><td>Negative Ledger Balances Detected</td><td>${data.negativeBalancesCount}</td></tr>\n  <tr><td>Unusual Transactions Flagged</td><td>${data.unusualTransactionsCount}</td></tr>\n</table>\n<p style=\"color:#7f8c8d;font-size:12px;\"><em>Auto-generated by APEX Trust Monitor. This report does not replace a formal trust audit as required by your state Law Society.</em></p>\n</body></html>`;\n\nreturn [{ json: { ...data, reportHtml, reportMonth: prevMonth } }];"
+      },
+      "id": "code-05-report",
+      "name": "Generate Monthly Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        832
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{PARTNER_EMAIL}}",
+        "subject": "={{ 'Trust Account Reconciliation Report — ' + $json.reportMonth }}",
+        "message": "={{ $json.reportHtml }}",
+        "options": {}
+      },
+      "id": "gmail-05-monthly",
+      "name": "Email Monthly Report to Partner",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2016,
+        832
+      ],
+      "webhookId": "8b70c19b-2d3f-4628-9de7-f7445c775fc0",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CRED_ID",
+          "name": "Gmail"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily Trust Check": {
+      "main": [
+        [
+          {
+            "node": "Get Trust Bank Balance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Trust Bank Balance": {
+      "main": [
+        [
+          {
+            "node": "Get Client Trust Ledgers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Client Trust Ledgers": {
+      "main": [
+        [
+          {
+            "node": "Get Trust Creditors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Trust Creditors": {
+      "main": [
+        [
+          {
+            "node": "Three-Way Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Three-Way Reconciliation": {
+      "main": [
+        [
+          {
+            "node": "Variance Exceeds Threshold?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Any Negative Balances?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Daily Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Variance Exceeds Threshold?": {
+      "main": [
+        [
+          {
+            "node": "URGENT Alert - Trust Variance",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "URGENT Alert - Trust Variance": {
+      "main": [
+        [
+          {
+            "node": "Urgent Email to Trust Supervisor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Negative Balances?": {
+      "main": [
+        [
+          {
+            "node": "Alert - Negative Ledger Balance",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Log Daily Reconciliation": {
+      "main": [
+        [
+          {
+            "node": "Is First Day of Month?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is First Day of Month?": {
+      "main": [
+        [
+          {
+            "node": "Generate Monthly Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Generate Monthly Report": {
+      "main": [
+        [
+          {
+            "node": "Email Monthly Report to Partner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "60c19aa6-72fc-4894-ad53-4faee91c8536",
+  "meta": {
+    "instanceId": "7ced4288e0a77f50a09c54c29f3347ae52e6300528ae434403d37065e9222860"
+  },
+  "id": "EMIccipkpfrqviwz",
+  "tags": []
+}

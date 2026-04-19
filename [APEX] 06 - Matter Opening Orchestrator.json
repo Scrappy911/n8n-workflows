@@ -1,0 +1,965 @@
+{
+  "name": "[APEX] 06 - Matter Opening Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## [APEX] 06 - Matter Opening Orchestrator\n\n**Purpose:** Full matter opening automation. On approval, runs LEAP conflict check, creates matter, generates and sends costs agreement via PandaDoc (template selected by matter type), creates Google Drive folder structure, logs key dates to calendar, triggers InfoTrack property search for conveyancing, notifies fee earner, creates standard tasks in LEAP, and logs to Airtable.\n\n**Trigger:** POST to /webhook/new-matter-approved\n\n**Payload:** `{ clientId, clientName, clientEmail, matterType (Conveyancing/Family Law/Litigation/Commercial), feeEarnerId, supervisingPartnerId, propertyAddress, estimatedFee, billingType, keyDates[] }`\n\n**Credentials to swap before activating:**\n- `LEAP_API_KEY` → LEAP Bearer token (used in HTTP header)\n- `PANDADOC_API_KEY` → PandaDoc API key\n- `GOOGLE_DRIVE_CRED_ID` → Google Drive OAuth2\n- `GOOGLE_CALENDAR_CRED_ID` → Google Calendar OAuth2\n- `INFOTRACK_API_KEY` → InfoTrack API key\n- `SLACK_CRED_ID` → Slack OAuth2\n- `AIRTABLE_CRED_ID` → Airtable Personal Access Token\n\n**Placeholders to replace:**\n- `{{LEAP_API_BASE}}` → LEAP API base URL\n- `{{PANDADOC_CONVEYANCING_TEMPLATE}}` → PandaDoc template UUID\n- `{{PANDADOC_FAMILY_LAW_TEMPLATE}}`, `{{PANDADOC_LITIGATION_TEMPLATE}}`, `{{PANDADOC_COMMERCIAL_TEMPLATE}}`\n- `{{MATTERS_PARENT_FOLDER_ID}}` → Google Drive parent folder ID\n- `{{FIRM_CALENDAR_ID}}` → Google Calendar ID\n- `{{AIRTABLE_BASE_ID}}` → Airtable base ID\n\n⚠️ Google Calendar node creates the FIRST key date only. Wrap in SplitInBatches loop for multiple dates.",
+        "height": 460,
+        "width": 800,
+        "color": 6
+      },
+      "id": "sticky-06",
+      "name": "Workflow Info",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        256,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "new-matter-approved",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-06",
+      "name": "Receive Matter Approval",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        256,
+        656
+      ],
+      "webhookId": "ed4f9931-0831-4149-8409-4dac93fd9a87"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "g1",
+              "name": "clientId",
+              "value": "={{ $json.body.clientId }}",
+              "type": "string"
+            },
+            {
+              "id": "g2",
+              "name": "clientName",
+              "value": "={{ $json.body.clientName }}",
+              "type": "string"
+            },
+            {
+              "id": "g3",
+              "name": "clientEmail",
+              "value": "={{ $json.body.clientEmail ?? '' }}",
+              "type": "string"
+            },
+            {
+              "id": "g4",
+              "name": "matterType",
+              "value": "={{ $json.body.matterType }}",
+              "type": "string"
+            },
+            {
+              "id": "g5",
+              "name": "feeEarnerId",
+              "value": "={{ $json.body.feeEarnerId }}",
+              "type": "string"
+            },
+            {
+              "id": "g6",
+              "name": "supervisingPartnerId",
+              "value": "={{ $json.body.supervisingPartnerId }}",
+              "type": "string"
+            },
+            {
+              "id": "g7",
+              "name": "propertyAddress",
+              "value": "={{ $json.body.propertyAddress ?? '' }}",
+              "type": "string"
+            },
+            {
+              "id": "g8",
+              "name": "estimatedFee",
+              "value": "={{ $json.body.estimatedFee }}",
+              "type": "number"
+            },
+            {
+              "id": "g9",
+              "name": "billingType",
+              "value": "={{ $json.body.billingType }}",
+              "type": "string"
+            },
+            {
+              "id": "g10",
+              "name": "keyDates",
+              "value": "={{ $json.body.keyDates ?? [] }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-06-norm",
+      "name": "Normalize Matter Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        480,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://LEAP_API_BASE_URL/clients/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.clientName }}"
+            },
+            {
+              "name": "includeMatters",
+              "value": "true"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer LEAP_API_KEY_PLACEHOLDER"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "http-06-conflict",
+      "name": "Conflict Check LEAP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        704,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const searchResults = $json.clients ?? $json.data ?? [];\nconst clientName = $('Normalize Matter Data').item.json.clientName.toLowerCase();\n\nconst potentialConflicts = searchResults.filter(c => {\n  const name = (c.name ?? c.clientName ?? '').toLowerCase();\n  return name.includes(clientName) || clientName.includes(name);\n});\n\nconst conflictFound = potentialConflicts.some(c =>\n  (c.matters ?? c.activeMatters ?? []).length > 0\n);\n\nreturn [{\n  json: {\n    conflictFound,\n    conflictDetails: potentialConflicts,\n    searchResultCount: searchResults.length\n  }\n}];"
+      },
+      "id": "code-06-conflicts",
+      "name": "Analyze Conflicts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-conflict",
+              "leftValue": "={{ $json.conflictFound }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-06-conflict",
+      "name": "Conflict Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1136,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "matters",
+          "mode": "name",
+          "cachedResultName": "#matters"
+        },
+        "text": "={{ '⚠️ CONFLICT CHECK FAILED — Manual Review Required\nClient: ' + $('Normalize Matter Data').item.json.clientName + '\nMatter Type: ' + $('Normalize Matter Data').item.json.matterType + '\n\nPotential conflicts found in LEAP. Do NOT open this matter until a conflict clearance has been completed and documented.' }}",
+        "otherOptions": {}
+      },
+      "id": "slack-06-conflict",
+      "name": "Conflict Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        1360,
+        832
+      ],
+      "webhookId": "7019bb4f-b729-41d3-b120-caf24fb36c22"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://LEAP_API_BASE_URL/matters",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer LEAP_API_KEY_PLACEHOLDER"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-06-create-matter",
+      "name": "Create Matter in LEAP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.pandadoc.com/public/v1/documents",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=API-Key {{PANDADOC_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-06-pandadoc-create",
+      "name": "Generate Costs Agreement",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1584,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://api.pandadoc.com/public/v1/documents/' + $json.id + '/send' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=API-Key {{PANDADOC_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-06-pandadoc-send",
+      "name": "Send for Signature",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1792,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $('Normalize Matter Data').item.json.matterType + ' — ' + $('Normalize Matter Data').item.json.clientName }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{MATTERS_PARENT_FOLDER_ID}}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "gdrive-06-folder",
+      "name": "Create Matter Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2016,
+        512
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CRED_ID",
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "01 Correspondence",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('Create Matter Folder').item.json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "gdrive-06-sub1",
+      "name": "Subfolder 01 Correspondence",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2240,
+        512
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CRED_ID",
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "02 Court Documents",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('Create Matter Folder').item.json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "gdrive-06-sub2",
+      "name": "Subfolder 02 Court Documents",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2464,
+        512
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CRED_ID",
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "03 Evidence",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('Create Matter Folder').item.json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "gdrive-06-sub3",
+      "name": "Subfolder 03 Evidence",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2672,
+        512
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CRED_ID",
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "04 Drafts",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('Create Matter Folder').item.json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "gdrive-06-sub4",
+      "name": "Subfolder 04 Drafts",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2896,
+        512
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CRED_ID",
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "05 Signed Documents",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('Create Matter Folder').item.json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "gdrive-06-sub5",
+      "name": "Subfolder 05 Signed Documents",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        3120,
+        512
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CRED_ID",
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "start": "={{ ($('Normalize Matter Data').item.json.keyDates[0] && $('Normalize Matter Data').item.json.keyDates[0].date) || $now.plus({days: 14}).toFormat('yyyy-MM-dd') }}",
+        "end": "={{ ($('Normalize Matter Data').item.json.keyDates[0] && $('Normalize Matter Data').item.json.keyDates[0].date) || $now.plus({days: 14}).toFormat('yyyy-MM-dd') }}",
+        "additionalFields": {
+          "allday": true,
+          "description": "={{ 'Matter Type: ' + $('Normalize Matter Data').item.json.matterType + '\\nClient: ' + $('Normalize Matter Data').item.json.clientName + '\\nFee Earner ID: ' + $('Normalize Matter Data').item.json.feeEarnerId }}",
+          "summary": "={{ (($('Normalize Matter Data').item.json.keyDates[0] && $('Normalize Matter Data').item.json.keyDates[0].title) || 'Key Date') + ' — ' + $('Normalize Matter Data').item.json.clientName }}"
+        }
+      },
+      "id": "gcal-06-keydates",
+      "name": "Add Key Date to Calendar",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.1,
+      "position": [
+        3344,
+        512
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "GOOGLE_CALENDAR_CRED_ID",
+          "name": "Google Calendar"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-conv",
+              "leftValue": "={{ $('Normalize Matter Data').item.json.matterType }}",
+              "rightValue": "Conveyancing",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-06-conveyancing",
+      "name": "Is Conveyancing Matter?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3552,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.infotrack.com.au/api/searches/property",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{INFOTRACK_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "http-06-infotrack",
+      "name": "InfoTrack Property Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3776,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "matters",
+          "mode": "name",
+          "cachedResultName": "#matters"
+        },
+        "text": "={{ '✅ New matter opened: ' + $('Normalize Matter Data').item.json.matterType + ' for ' + $('Normalize Matter Data').item.json.clientName + '\\nMatter ID: ' + String($('Create Matter in LEAP').item.json.id ?? $('Create Matter in LEAP').item.json.matterId ?? 'See LEAP') + '\\nCosts agreement sent for signature via PandaDoc.\\nDrive folder created. Standard tasks created in LEAP.\\n\\nAssigned to fee earner ID: ' + $('Normalize Matter Data').item.json.feeEarnerId }}",
+        "otherOptions": {}
+      },
+      "id": "slack-06-notify",
+      "name": "Notify Fee Earner",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        4000,
+        512
+      ],
+      "webhookId": "0d7e804c-70c8-4087-9c42-af2c0f51a943"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://LEAP_API_BASE_URL/tasks/bulk",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer LEAP_API_KEY_PLACEHOLDER"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "http-06-leap-tasks",
+      "name": "Create Tasks in LEAP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4224,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "={{AIRTABLE_BASE_ID}}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "MATTER_OPENING_LOG_TABLE_ID",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ClientName": "={{ $('Normalize Matter Data').item.json.clientName }}",
+            "MatterType": "={{ $('Normalize Matter Data').item.json.matterType }}",
+            "MatterId": "={{ String($('Create Matter in LEAP').item.json.id ?? $('Create Matter in LEAP').item.json.matterId ?? '') }}",
+            "CostsAgreementId": "={{ $('Generate Costs Agreement').item.json.id }}",
+            "FolderPath": "={{ $('Create Matter Folder').item.json.id }}",
+            "FeeEarnerId": "={{ $('Normalize Matter Data').item.json.feeEarnerId }}",
+            "OpenedAt": "={{ $now.toISO() }}",
+            "ConveyancingSearchOrdered": "={{ $('Normalize Matter Data').item.json.matterType === 'Conveyancing' }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "at-06-log",
+      "name": "Matter Opening Log",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        4432,
+        512
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "AIRTABLE_CRED_ID",
+          "name": "Airtable"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Receive Matter Approval": {
+      "main": [
+        [
+          {
+            "node": "Normalize Matter Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Matter Data": {
+      "main": [
+        [
+          {
+            "node": "Conflict Check LEAP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conflict Check LEAP": {
+      "main": [
+        [
+          {
+            "node": "Analyze Conflicts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Conflicts": {
+      "main": [
+        [
+          {
+            "node": "Conflict Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conflict Found?": {
+      "main": [
+        [
+          {
+            "node": "Conflict Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Matter in LEAP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Matter in LEAP": {
+      "main": [
+        [
+          {
+            "node": "Generate Costs Agreement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Costs Agreement": {
+      "main": [
+        [
+          {
+            "node": "Send for Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send for Signature": {
+      "main": [
+        [
+          {
+            "node": "Create Matter Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Matter Folder": {
+      "main": [
+        [
+          {
+            "node": "Subfolder 01 Correspondence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subfolder 01 Correspondence": {
+      "main": [
+        [
+          {
+            "node": "Subfolder 02 Court Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subfolder 02 Court Documents": {
+      "main": [
+        [
+          {
+            "node": "Subfolder 03 Evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subfolder 03 Evidence": {
+      "main": [
+        [
+          {
+            "node": "Subfolder 04 Drafts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subfolder 04 Drafts": {
+      "main": [
+        [
+          {
+            "node": "Subfolder 05 Signed Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subfolder 05 Signed Documents": {
+      "main": [
+        [
+          {
+            "node": "Add Key Date to Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Key Date to Calendar": {
+      "main": [
+        [
+          {
+            "node": "Is Conveyancing Matter?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Conveyancing Matter?": {
+      "main": [
+        [
+          {
+            "node": "InfoTrack Property Search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Fee Earner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InfoTrack Property Search": {
+      "main": [
+        [
+          {
+            "node": "Notify Fee Earner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Fee Earner": {
+      "main": [
+        [
+          {
+            "node": "Create Tasks in LEAP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Tasks in LEAP": {
+      "main": [
+        [
+          {
+            "node": "Matter Opening Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "8f27f9c8-33ad-4046-9893-8a4af578bd29",
+  "meta": {
+    "instanceId": "7ced4288e0a77f50a09c54c29f3347ae52e6300528ae434403d37065e9222860"
+  },
+  "id": "m6yf23Kyaaedr6JE",
+  "tags": []
+}

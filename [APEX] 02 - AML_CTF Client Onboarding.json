@@ -1,0 +1,709 @@
+{
+  "name": "[APEX] 02 - AML/CTF Client Onboarding",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## [APEX] 02 - AML/CTF Client Onboarding\n\n**Purpose:** AUSTRAC Tranche 2 compliant onboarding. Runs identity verification via GreenID DVS, scores risk, generates engagement letter via PandaDoc, creates Google Drive folder structure, writes AML compliance register in Airtable, sends welcome email and Slack notification.\n\n**Trigger:** POST to /webhook/new-client-intake\n\n**Payload:** `{ firstName, lastName, email, entityType (individual/company/trust), serviceRequested, dateOfBirth, driverLicenceNumber, addressLine1, suburb, state, postcode }`\n\n**Credentials to swap before activating:**\n- `GREENID_API_KEY` → GreenID/VixVerify API key (HTTP header)\n- `PANDADOC_CRED_ID` → PandaDoc API key\n- `GOOGLE_DRIVE_CRED_ID` → Google Drive OAuth2\n- `AIRTABLE_CRED_ID` → Airtable Personal Access Token\n- `GMAIL_CRED_ID` → Gmail OAuth2\n- `SLACK_CRED_ID` → Slack OAuth2\n\n**Placeholders to replace:**\n- `{{AIRTABLE_BASE_ID}}` → Airtable base ID\n- `{{PANDADOC_TEMPLATE_ID}}` → PandaDoc template UUID\n- `{{CLIENTS_PARENT_FOLDER_ID}}` → Google Drive parent folder ID\n- `{{FIRM_NAME}}` → Firm display name\n\n⚠️ This workflow fulfils AUSTRAC Tranche 2 onboarding obligations. Do NOT activate without real credentials.",
+        "height": 420,
+        "width": 740,
+        "color": 3
+      },
+      "id": "sticky-02",
+      "name": "Workflow Info",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        256,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "new-client-intake",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-02",
+      "name": "Receive New Client",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        256,
+        608
+      ],
+      "webhookId": "6a88c55b-c7c8-4006-ba2d-d25008f70471"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b1",
+              "name": "firstName",
+              "value": "={{ $json.body.firstName }}",
+              "type": "string"
+            },
+            {
+              "id": "b2",
+              "name": "lastName",
+              "value": "={{ $json.body.lastName }}",
+              "type": "string"
+            },
+            {
+              "id": "b3",
+              "name": "email",
+              "value": "={{ $json.body.email }}",
+              "type": "string"
+            },
+            {
+              "id": "b4",
+              "name": "entityType",
+              "value": "={{ $json.body.entityType }}",
+              "type": "string"
+            },
+            {
+              "id": "b5",
+              "name": "serviceRequested",
+              "value": "={{ $json.body.serviceRequested }}",
+              "type": "string"
+            },
+            {
+              "id": "b6",
+              "name": "dateOfBirth",
+              "value": "={{ $json.body.dateOfBirth }}",
+              "type": "string"
+            },
+            {
+              "id": "b7",
+              "name": "driverLicenceNumber",
+              "value": "={{ $json.body.driverLicenceNumber }}",
+              "type": "string"
+            },
+            {
+              "id": "b8",
+              "name": "addressLine1",
+              "value": "={{ $json.body.addressLine1 }}",
+              "type": "string"
+            },
+            {
+              "id": "b9",
+              "name": "suburb",
+              "value": "={{ $json.body.suburb }}",
+              "type": "string"
+            },
+            {
+              "id": "b10",
+              "name": "state",
+              "value": "={{ $json.body.state }}",
+              "type": "string"
+            },
+            {
+              "id": "b11",
+              "name": "postcode",
+              "value": "={{ $json.body.postcode }}",
+              "type": "string"
+            },
+            {
+              "id": "b12",
+              "name": "fullName",
+              "value": "={{ $json.body.firstName + ' ' + $json.body.lastName }}",
+              "type": "string"
+            },
+            {
+              "id": "b13",
+              "name": "intakedAt",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-02-normalize",
+      "name": "Normalize Intake Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        480,
+        608
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.vixverify.com/Registrations/verify",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{GREENID_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "http-greenid-02",
+      "name": "GreenID Identity Verification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        704,
+        608
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-verified",
+              "leftValue": "={{ $json.verified }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-02-verified",
+      "name": "Identity Verified?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        912,
+        608
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "onboarding",
+          "mode": "name",
+          "cachedResultName": "#onboarding"
+        },
+        "text": "={{ '⚠️ MANUAL REVIEW REQUIRED\nClient: ' + $('Normalize Intake Data').item.json.fullName + '\nEntity type: ' + $('Normalize Intake Data').item.json.entityType + '\nVerification FAILED. GreenID could not verify identity. Assign to compliance officer for manual DVS check.' }}",
+        "otherOptions": {}
+      },
+      "id": "slack-02-manualreview",
+      "name": "Alert Manual Review Required",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        1136,
+        752
+      ],
+      "webhookId": "14f56544-dd17-4a94-af8f-41b9d290ef4a"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c1",
+              "name": "verificationId",
+              "value": "={{ $json.verificationId }}",
+              "type": "string"
+            },
+            {
+              "id": "c2",
+              "name": "matchConfidence",
+              "value": "={{ $json.matchConfidence }}",
+              "type": "number"
+            },
+            {
+              "id": "c3",
+              "name": "riskLevel",
+              "value": "={{ $('Normalize Intake Data').item.json.entityType === 'individual' ? 'Low' : $('Normalize Intake Data').item.json.entityType === 'company' ? 'Medium' : 'High' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-02-risk",
+      "name": "Calculate Risk Score",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1136,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.pandadoc.com/public/v1/documents",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=API-Key {{PANDADOC_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-pandadoc-02",
+      "name": "Create Engagement Letter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $('Normalize Intake Data').item.json.lastName + ', ' + $('Normalize Intake Data').item.json.firstName + ' - ' + $('Normalize Intake Data').item.json.entityType }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{CLIENTS_PARENT_FOLDER_ID}}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "gdrive-02-mainfolder",
+      "name": "Create Client Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1584,
+        464
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CRED_ID",
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "01 Engagement",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('Create Client Folder').item.json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "gdrive-02-sub1",
+      "name": "Create Subfolder 01 Engagement",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1792,
+        464
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CRED_ID",
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "02 Identity Documents",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('Create Client Folder').item.json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "gdrive-02-sub2",
+      "name": "Create Subfolder 02 Identity Docs",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2016,
+        464
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CRED_ID",
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "03 Correspondence",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('Create Client Folder').item.json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "gdrive-02-sub3",
+      "name": "Create Subfolder 03 Correspondence",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2240,
+        464
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CRED_ID",
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "04 Work Papers",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('Create Client Folder').item.json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "gdrive-02-sub4",
+      "name": "Create Subfolder 04 Work Papers",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2464,
+        464
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CRED_ID",
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "={{AIRTABLE_BASE_ID}}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "AML_REGISTER_TABLE_ID",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ClientName": "={{ $('Normalize Intake Data').item.json.fullName }}",
+            "EntityType": "={{ $('Normalize Intake Data').item.json.entityType }}",
+            "Email": "={{ $('Normalize Intake Data').item.json.email }}",
+            "VerificationId": "={{ $('Calculate Risk Score').item.json.verificationId }}",
+            "VerificationStatus": "Verified",
+            "RiskLevel": "={{ $('Calculate Risk Score').item.json.riskLevel }}",
+            "OnboardedAt": "={{ $('Normalize Intake Data').item.json.intakedAt }}",
+            "EngagementLetterId": "={{ $('Create Engagement Letter').item.json.id }}",
+            "FolderPath": "={{ $('Create Client Folder').item.json.id }}",
+            "VerifiedBy": "System"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "at-02-aml",
+      "name": "AML Register Entry",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        2672,
+        464
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "AIRTABLE_CRED_ID",
+          "name": "Airtable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Normalize Intake Data').item.json.email }}",
+        "subject": "Welcome to FIRM_NAME",
+        "message": "={{ '<p>Dear ' + $('Normalize Intake Data').item.json.firstName + ',</p><p>Welcome to <strong>FIRM_NAME</strong>. We are delighted to have you as a client.</p><p>Your engagement letter has been prepared and will be sent to you shortly for signature. Please review it carefully before signing.</p><p>Your dedicated client portal and file reference will be provided once the engagement letter is executed.</p><p>If you have any questions, please do not hesitate to contact our office.</p><p>Kind regards,<br/>The Team<br/>FIRM_NAME</p>' }}",
+        "options": {}
+      },
+      "id": "gmail-02-welcome",
+      "name": "Send Welcome Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2896,
+        464
+      ],
+      "webhookId": "c281acc7-6c68-46fe-9f81-7f265c028d07",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CRED_ID",
+          "name": "Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "onboarding",
+          "mode": "name",
+          "cachedResultName": "#onboarding"
+        },
+        "text": "={{ '✅ New client onboarded: ' + $('Normalize Intake Data').item.json.fullName + ' (' + $('Normalize Intake Data').item.json.entityType + ')\nService: ' + $('Normalize Intake Data').item.json.serviceRequested + '\nRisk level: ' + $('Calculate Risk Score').item.json.riskLevel + '\nVerification: ✓ Passed\nEngagement letter generated. Welcome email sent.' }}",
+        "otherOptions": {}
+      },
+      "id": "slack-02-notify",
+      "name": "Notify Team",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        3120,
+        464
+      ],
+      "webhookId": "66e73b8b-cae1-4148-a214-e7e59c408ecc"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Receive New Client": {
+      "main": [
+        [
+          {
+            "node": "Normalize Intake Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Intake Data": {
+      "main": [
+        [
+          {
+            "node": "GreenID Identity Verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GreenID Identity Verification": {
+      "main": [
+        [
+          {
+            "node": "Identity Verified?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Identity Verified?": {
+      "main": [
+        [
+          {
+            "node": "Calculate Risk Score",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Alert Manual Review Required",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Risk Score": {
+      "main": [
+        [
+          {
+            "node": "Create Engagement Letter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Engagement Letter": {
+      "main": [
+        [
+          {
+            "node": "Create Client Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Client Folder": {
+      "main": [
+        [
+          {
+            "node": "Create Subfolder 01 Engagement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Subfolder 01 Engagement": {
+      "main": [
+        [
+          {
+            "node": "Create Subfolder 02 Identity Docs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Subfolder 02 Identity Docs": {
+      "main": [
+        [
+          {
+            "node": "Create Subfolder 03 Correspondence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Subfolder 03 Correspondence": {
+      "main": [
+        [
+          {
+            "node": "Create Subfolder 04 Work Papers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Subfolder 04 Work Papers": {
+      "main": [
+        [
+          {
+            "node": "AML Register Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AML Register Entry": {
+      "main": [
+        [
+          {
+            "node": "Send Welcome Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Welcome Email": {
+      "main": [
+        [
+          {
+            "node": "Notify Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "2c6db9dc-0081-46e2-921d-5e752ff94280",
+  "meta": {
+    "instanceId": "7ced4288e0a77f50a09c54c29f3347ae52e6300528ae434403d37065e9222860"
+  },
+  "id": "02oDUenrE1l89tS5",
+  "tags": []
+}

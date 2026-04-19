@@ -1,0 +1,610 @@
+{
+  "name": "[APEX] 09 - Practice-Wide Compliance Deadline Tracker - v1",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "apex-register-deadline",
+        "options": {}
+      },
+      "id": "wf09-n01",
+      "name": "Register Deadline Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "b5a40cdd-d2f5-400d-ba30-573ae243e30e"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "wf09-n02",
+      "name": "Daily Compliance Scan",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "wf09-n03",
+      "name": "Monday Digest",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        608
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "apex-deadline-complete",
+        "options": {}
+      },
+      "id": "wf09-n04",
+      "name": "Mark Complete Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        912
+      ],
+      "webhookId": "ca8ffc2b-bfea-4edc-a977-e00847c80414"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "deadlineTitle",
+              "value": "={{ $json.body.deadlineTitle }}",
+              "type": "string"
+            },
+            {
+              "id": "2",
+              "name": "deadlineDate",
+              "value": "={{ $json.body.deadlineDate }}",
+              "type": "string"
+            },
+            {
+              "id": "3",
+              "name": "matterRef",
+              "value": "={{ $json.body.matterRef }}",
+              "type": "string"
+            },
+            {
+              "id": "4",
+              "name": "clientName",
+              "value": "={{ $json.body.clientName }}",
+              "type": "string"
+            },
+            {
+              "id": "5",
+              "name": "priority",
+              "value": "={{ $json.body.priority || 'Medium' }}",
+              "type": "string"
+            },
+            {
+              "id": "6",
+              "name": "assignedTo",
+              "value": "={{ $json.body.assignedTo }}",
+              "type": "string"
+            },
+            {
+              "id": "7",
+              "name": "deadlineType",
+              "value": "={{ $json.body.deadlineType }}",
+              "type": "string"
+            },
+            {
+              "id": "8",
+              "name": "status",
+              "value": "Open",
+              "type": "string"
+            },
+            {
+              "id": "9",
+              "name": "registeredAt",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf09-n05",
+      "name": "Format New Deadline",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "mode": "id",
+          "value": "={{AIRTABLE_BASE_ID}}"
+        },
+        "table": {
+          "mode": "id",
+          "value": "COMPLIANCE_DEADLINES_TABLE_ID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "DeadlineTitle": "={{ $json.deadlineTitle }}",
+            "DeadlineDate": "={{ $json.deadlineDate }}",
+            "MatterRef": "={{ $json.matterRef }}",
+            "ClientName": "={{ $json.clientName }}",
+            "Priority": "={{ $json.priority }}",
+            "AssignedTo": "={{ $json.assignedTo }}",
+            "DeadlineType": "={{ $json.deadlineType }}",
+            "Status": "Open",
+            "RegisteredAt": "={{ $json.registeredAt }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "wf09-n06",
+      "name": "Register in Airtable",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        480,
+        0
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "airtable_cred",
+          "name": "Airtable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{COMPLIANCE_OFFICER_EMAIL}}",
+        "subject": "='Compliance Deadline Registered: ' + $('Format New Deadline').item.json.deadlineTitle",
+        "message": "='A new compliance deadline has been registered in the APEX Tracker.\n\nTitle: ' + $('Format New Deadline').item.json.deadlineTitle + '\nDue Date: ' + $('Format New Deadline').item.json.deadlineDate + '\nDeadline Type: ' + $('Format New Deadline').item.json.deadlineType + '\nMatter Reference: ' + $('Format New Deadline').item.json.matterRef + '\nClient: ' + $('Format New Deadline').item.json.clientName + '\nPriority: ' + $('Format New Deadline').item.json.priority + '\nAssigned To: ' + $('Format New Deadline').item.json.assignedTo + '\n\nPlease log in to the compliance tracker to confirm and manage this deadline.'",
+        "options": {}
+      },
+      "id": "wf09-n07",
+      "name": "Send Registration Confirmation",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        720,
+        0
+      ],
+      "webhookId": "5f323582-eabb-4705-9a77-3e27527e1200",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail_cred",
+          "name": "Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "mode": "id",
+          "value": "={{AIRTABLE_BASE_ID}}"
+        },
+        "table": {
+          "mode": "id",
+          "value": "COMPLIANCE_DEADLINES_TABLE_ID"
+        },
+        "filterByFormula": "AND(NOT({Status} = 'Complete'), IS_BEFORE({DeadlineDate}, DATEADD(TODAY(), 3, 'days')))",
+        "options": {}
+      },
+      "id": "wf09-n08",
+      "name": "Fetch Overdue & Due Soon Deadlines",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        240,
+        304
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "airtable_cred",
+          "name": "Airtable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "1",
+              "leftValue": "={{ DateTime.fromISO($json.DeadlineDate) < DateTime.now() }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf09-n09",
+      "name": "Triage Urgency",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{COMPLIANCE_SLACK_CHANNEL_ID}}",
+          "mode": "id"
+        },
+        "text": "='⚠️ OVERDUE COMPLIANCE DEADLINE ⚠️\n\nTitle: ' + $json.DeadlineTitle + '\nWas Due: ' + $json.DeadlineDate + '\nClient: ' + $json.ClientName + '\nMatter: ' + $json.MatterRef + '\nPriority: ' + $json.Priority + '\nAssigned: ' + $json.AssignedTo + '\n\nImmediate action required. Please update the compliance tracker.'",
+        "otherOptions": {}
+      },
+      "id": "wf09-n10",
+      "name": "Send Critical Slack Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        160
+      ],
+      "webhookId": "ba64383e-4f64-4cd0-92be-3e77782bbd4e"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{COMPLIANCE_OFFICER_EMAIL}}",
+        "subject": "='Upcoming Deadline: ' + $json.DeadlineTitle + ' — ' + $json.DeadlineDate",
+        "message": "='Compliance deadline approaching:\n\nTitle: ' + $json.DeadlineTitle + '\nDue Date: ' + $json.DeadlineDate + '\nDeadline Type: ' + $json.DeadlineType + '\nClient: ' + $json.ClientName + '\nMatter Reference: ' + $json.MatterRef + '\nPriority: ' + $json.Priority + '\nAssigned To: ' + $json.AssignedTo + '\n\nPlease ensure this matter is actioned before the due date.'",
+        "options": {}
+      },
+      "id": "wf09-n11",
+      "name": "Send Upcoming Email Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        720,
+        464
+      ],
+      "webhookId": "1c73afcf-d050-4705-9168-8c537674360d",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail_cred",
+          "name": "Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "mode": "id",
+          "value": "={{AIRTABLE_BASE_ID}}"
+        },
+        "table": {
+          "mode": "id",
+          "value": "COMPLIANCE_DEADLINES_TABLE_ID"
+        },
+        "filterByFormula": "AND(NOT({Status} = 'Complete'), IS_AFTER({DeadlineDate}, DATEADD(TODAY(), -1, 'days')), IS_BEFORE({DeadlineDate}, DATEADD(TODAY(), 8, 'days')))",
+        "options": {}
+      },
+      "id": "wf09-n12",
+      "name": "Fetch Week Ahead Deadlines",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        240,
+        608
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "airtable_cred",
+          "name": "Airtable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nif (!items.length) {\n  return [{ json: { digest: 'No open compliance deadlines in the week ahead.', count: 0 } }];\n}\n\nconst lineArray = [];\nfor (const item of items) {\n  const d = item.json;\n  const line = '\\u2022 ' + (d.DeadlineTitle || 'Untitled') + ' \\u2014 Due: ' + (d.DeadlineDate || 'TBC') + ' | Client: ' + (d.ClientName || 'Unknown') + ' | Matter: ' + (d.MatterRef || 'N/A') + ' | Priority: ' + (d.Priority || 'Medium') + ' | Assigned: ' + (d.AssignedTo || 'Unassigned');\n  lineArray.push(line);\n}\n\nconst weekOf = DateTime.now().toFormat('d MMMM yyyy');\nconst digest = 'APEX Practice \\u2014 Weekly Compliance Digest (Week of ' + weekOf + ')\\n\\nOpen deadlines this week: ' + items.length + '\\n\\n' + lineArray.join('\\n') + '\\n\\nAll deadlines must be reviewed and actioned. Contact FIRM_EMAIL with queries.';\n\nreturn [{ json: { digest, count: items.length } }];"
+      },
+      "id": "wf09-n13",
+      "name": "Build Weekly Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        608
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{COMPLIANCE_OFFICER_EMAIL}}",
+        "subject": "='APEX Weekly Compliance Digest — ' + $now.toFormat('d MMM yyyy')",
+        "message": "={{ $json.digest }}",
+        "options": {}
+      },
+      "id": "wf09-n14",
+      "name": "Send Digest Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        720,
+        560
+      ],
+      "webhookId": "51090b53-3ad8-4779-a37a-f1e58bb9ee52",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail_cred",
+          "name": "Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{COMPLIANCE_SLACK_CHANNEL_ID}}",
+          "mode": "id"
+        },
+        "text": "={{ $json.digest }}",
+        "otherOptions": {}
+      },
+      "id": "wf09-n15",
+      "name": "Send Digest Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        704
+      ],
+      "webhookId": "2bd01549-a78f-4616-88ae-9c187b6903a0"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "base": {
+          "mode": "id",
+          "value": "={{AIRTABLE_BASE_ID}}"
+        },
+        "table": {
+          "mode": "id",
+          "value": "COMPLIANCE_DEADLINES_TABLE_ID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Status": "Complete",
+            "CompletedAt": "={{ $now.toISO() }}",
+            "CompletedBy": "={{ $json.body.completedBy }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "wf09-n16",
+      "name": "Mark Deadline Complete",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        240,
+        912
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "airtable_cred",
+          "name": "Airtable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{COMPLIANCE_SLACK_CHANNEL_ID}}",
+          "mode": "id"
+        },
+        "text": "='✅ Compliance deadline marked COMPLETE\n\nRecord ID: ' + $('Mark Complete Webhook').item.json.body.recordId + '\nCompleted By: ' + $('Mark Complete Webhook').item.json.body.completedBy + '\nCompleted At: ' + $now.toFormat('d MMM yyyy, h:mm a')",
+        "otherOptions": {}
+      },
+      "id": "wf09-n17",
+      "name": "Notify Completion via Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        912
+      ],
+      "webhookId": "05539367-3eb6-4e82-82b5-8b5551b23119"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Register Deadline Webhook": {
+      "main": [
+        [
+          {
+            "node": "Format New Deadline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format New Deadline": {
+      "main": [
+        [
+          {
+            "node": "Register in Airtable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register in Airtable": {
+      "main": [
+        [
+          {
+            "node": "Send Registration Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Compliance Scan": {
+      "main": [
+        [
+          {
+            "node": "Fetch Overdue & Due Soon Deadlines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Overdue & Due Soon Deadlines": {
+      "main": [
+        [
+          {
+            "node": "Triage Urgency",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Triage Urgency": {
+      "main": [
+        [
+          {
+            "node": "Send Critical Slack Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Upcoming Email Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Monday Digest": {
+      "main": [
+        [
+          {
+            "node": "Fetch Week Ahead Deadlines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Week Ahead Deadlines": {
+      "main": [
+        [
+          {
+            "node": "Build Weekly Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Weekly Digest": {
+      "main": [
+        [
+          {
+            "node": "Send Digest Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Digest Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Complete Webhook": {
+      "main": [
+        [
+          {
+            "node": "Mark Deadline Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Deadline Complete": {
+      "main": [
+        [
+          {
+            "node": "Notify Completion via Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Australia/Melbourne",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "aea87b5f-01e4-4286-974d-4252eeb3dcc9",
+  "meta": {
+    "instanceId": "7ced4288e0a77f50a09c54c29f3347ae52e6300528ae434403d37065e9222860"
+  },
+  "id": "YdbLbIdnTY2xPA1Y",
+  "tags": []
+}

@@ -1,0 +1,797 @@
+{
+  "name": "[APEX] 04 - BAS Prep Data Gathering",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## [APEX] 04 - BAS Prep Data Gathering\n\n**Purpose:** Quarterly scheduled job that pulls GST and bank reconciliation data from Xero for each active BAS client, builds a pre-BAS checklist, appends to Google Sheets tracker, and emails the responsible accountant. Does NOT lodge BAS — it prepares all data for accountant review.\n\n**Trigger:** Cron — 1st Jan, Apr, Jul, Oct at 07:00 AEST\n\n**Flow:** Fetch all active quarterly clients from Airtable → loop one client at a time → pull BAS/GST/bank rec data from Xero API → build checklist → append to Google Sheets → email accountant (ready or gaps) → optionally email client for missing items\n\n**Credentials to swap before activating:**\n- `AIRTABLE_CRED_ID` → Airtable Personal Access Token\n- `XERO_CRED_ID` → Xero OAuth2 (used on HTTP Request nodes via predefined credential)\n- `GOOGLE_SHEETS_CRED_ID` → Google Sheets OAuth2\n- `GMAIL_CRED_ID` → Gmail OAuth2\n\n**Placeholders to replace:**\n- `{{AIRTABLE_BASE_ID}}` → Airtable base ID\n- `{{BAS_TRACKER_SHEET_ID}}` → Google Sheet ID for BAS tracker\n\n**Airtable 'BAS Clients' table must have columns:** ClientName, ClientEmail, AccountantEmail, XeroTenantId, Active (checkbox), LodgementCycle\n\n⚠️ Xero Reports API requires `Xero-Tenant-Id` header per request — stored per client in Airtable.",
+        "height": 440,
+        "width": 780,
+        "color": 4
+      },
+      "id": "sticky-04",
+      "name": "Workflow Info",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        256,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 1 1,4,7,10 *"
+            }
+          ]
+        }
+      },
+      "id": "sched-04",
+      "name": "Quarterly BAS Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        256,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "={{AIRTABLE_BASE_ID}}",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "BAS_CLIENTS_TABLE_ID",
+          "mode": "id"
+        },
+        "filterByFormula": "AND({Active}=TRUE(),{LodgementCycle}=\"Quarterly\")",
+        "options": {}
+      },
+      "id": "at-04-clients",
+      "name": "Get BAS Client List",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        480,
+        624
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "AIRTABLE_CRED_ID",
+          "name": "Airtable"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "split-04",
+      "name": "Process Each Client",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        704,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e1",
+              "name": "clientName",
+              "value": "={{ $json.fields.ClientName }}",
+              "type": "string"
+            },
+            {
+              "id": "e2",
+              "name": "clientEmail",
+              "value": "={{ $json.fields.ClientEmail }}",
+              "type": "string"
+            },
+            {
+              "id": "e3",
+              "name": "accountantEmail",
+              "value": "={{ $json.fields.AccountantEmail }}",
+              "type": "string"
+            },
+            {
+              "id": "e4",
+              "name": "xeroTenantId",
+              "value": "={{ $json.fields.XeroTenantId }}",
+              "type": "string"
+            },
+            {
+              "id": "e5",
+              "name": "fromDate",
+              "value": "={{ $now.minus({quarters: 1}).startOf('quarter').toFormat('yyyy-MM-dd') }}",
+              "type": "string"
+            },
+            {
+              "id": "e6",
+              "name": "toDate",
+              "value": "={{ $now.minus({quarters: 1}).endOf('quarter').toFormat('yyyy-MM-dd') }}",
+              "type": "string"
+            },
+            {
+              "id": "e7",
+              "name": "quarterLabel",
+              "value": "={{ $now.minus({quarters: 1}).startOf('quarter').toFormat('MMM') + ' – ' + $now.minus({quarters: 1}).endOf('quarter').toFormat('MMM yyyy') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-04-ctx",
+      "name": "Prepare Client Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        912,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.xero.com/api.xro/2.0/Reports/BAS",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fromDate",
+              "value": "={{ $('Prepare Client Context').item.json.fromDate }}"
+            },
+            {
+              "name": "toDate",
+              "value": "={{ $('Prepare Client Context').item.json.toDate }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Xero-Tenant-Id",
+              "value": "={{ $('Prepare Client Context').item.json.xeroTenantId }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "http-04-bas",
+      "name": "Get BAS Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1136,
+        624
+      ],
+      "credentials": {
+        "xeroOAuth2Api": {
+          "id": "XERO_CRED_ID",
+          "name": "Xero"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.xero.com/api.xro/2.0/Reports/GST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fromDate",
+              "value": "={{ $('Prepare Client Context').item.json.fromDate }}"
+            },
+            {
+              "name": "toDate",
+              "value": "={{ $('Prepare Client Context').item.json.toDate }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Xero-Tenant-Id",
+              "value": "={{ $('Prepare Client Context').item.json.xeroTenantId }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "http-04-gst",
+      "name": "Get GST Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        624
+      ],
+      "credentials": {
+        "xeroOAuth2Api": {
+          "id": "XERO_CRED_ID",
+          "name": "Xero"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.xero.com/api.xro/2.0/BankTransactions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "where",
+              "value": "IsReconciled==false"
+            },
+            {
+              "name": "fromDate",
+              "value": "={{ $('Prepare Client Context').item.json.fromDate }}"
+            },
+            {
+              "name": "toDate",
+              "value": "={{ $('Prepare Client Context').item.json.toDate }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Xero-Tenant-Id",
+              "value": "={{ $('Prepare Client Context').item.json.xeroTenantId }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "http-04-bankrec",
+      "name": "Get Unreconciled Transactions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1584,
+        624
+      ],
+      "credentials": {
+        "xeroOAuth2Api": {
+          "id": "XERO_CRED_ID",
+          "name": "Xero"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.xero.com/api.xro/2.0/Invoices",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "xeroOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "where",
+              "value": "TaxType==\"NONE\""
+            },
+            {
+              "name": "DateFrom",
+              "value": "={{ $('Prepare Client Context').item.json.fromDate }}"
+            },
+            {
+              "name": "DateTo",
+              "value": "={{ $('Prepare Client Context').item.json.toDate }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Xero-Tenant-Id",
+              "value": "={{ $('Prepare Client Context').item.json.xeroTenantId }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "http-04-suspgst",
+      "name": "Check Suspicious GST Codes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1792,
+        624
+      ],
+      "credentials": {
+        "xeroOAuth2Api": {
+          "id": "XERO_CRED_ID",
+          "name": "Xero"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f1",
+              "name": "clientName",
+              "value": "={{ $('Prepare Client Context').item.json.clientName }}",
+              "type": "string"
+            },
+            {
+              "id": "f2",
+              "name": "clientEmail",
+              "value": "={{ $('Prepare Client Context').item.json.clientEmail }}",
+              "type": "string"
+            },
+            {
+              "id": "f3",
+              "name": "accountantEmail",
+              "value": "={{ $('Prepare Client Context').item.json.accountantEmail }}",
+              "type": "string"
+            },
+            {
+              "id": "f4",
+              "name": "quarterLabel",
+              "value": "={{ $('Prepare Client Context').item.json.quarterLabel }}",
+              "type": "string"
+            },
+            {
+              "id": "f5",
+              "name": "unreconciledCount",
+              "value": "={{ ($('Get Unreconciled Transactions').item.json.BankTransactions || []).length }}",
+              "type": "number"
+            },
+            {
+              "id": "f6",
+              "name": "unusualGSTCount",
+              "value": "={{ ($('Check Suspicious GST Codes').item.json.Invoices || []).length }}",
+              "type": "number"
+            },
+            {
+              "id": "f7",
+              "name": "missingReceipts",
+              "value": "={{ 0 }}",
+              "type": "number"
+            },
+            {
+              "id": "f8",
+              "name": "readyForReview",
+              "value": "={{ ($('Get Unreconciled Transactions').item.json.BankTransactions || []).length === 0 && ($('Check Suspicious GST Codes').item.json.Invoices || []).length === 0 }}",
+              "type": "boolean"
+            },
+            {
+              "id": "f9",
+              "name": "processedAt",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-04-chk",
+      "name": "Build BAS Checklist",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2016,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{BAS_TRACKER_SHEET_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "BAS Tracker",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Client": "={{ $json.clientName }}",
+            "Quarter": "={{ $json.quarterLabel }}",
+            "UnreconciledCount": "={{ $json.unreconciledCount }}",
+            "UnusualGSTCount": "={{ $json.unusualGSTCount }}",
+            "MissingReceipts": "={{ $json.missingReceipts }}",
+            "ReadyForReview": "={{ $json.readyForReview }}",
+            "ProcessedAt": "={{ $json.processedAt }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "gs-04",
+      "name": "Append to BAS Tracker",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        2240,
+        624
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CRED_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-ready",
+              "leftValue": "={{ $json.readyForReview }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-04-ready",
+      "name": "Ready for Review?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2464,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Build BAS Checklist').item.json.accountantEmail }}",
+        "subject": "={{ 'BAS Ready for Review — ' + $('Build BAS Checklist').item.json.clientName + ' — ' + $('Build BAS Checklist').item.json.quarterLabel }}",
+        "message": "={{ '<p>Hi,</p><p>The BAS data for <strong>' + $('Build BAS Checklist').item.json.clientName + '</strong> (' + $('Build BAS Checklist').item.json.quarterLabel + ') is ready for review.</p><ul><li>Unreconciled transactions: <strong>' + $('Build BAS Checklist').item.json.unreconciledCount + '</strong></li><li>Unusual GST coded items: <strong>' + $('Build BAS Checklist').item.json.unusualGSTCount + '</strong></li></ul><p>✅ All checks passed. Please proceed with BAS preparation in Xero Tax.</p>' }}",
+        "options": {}
+      },
+      "id": "gmail-04-ready",
+      "name": "Email Accountant - Ready",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2672,
+        496
+      ],
+      "webhookId": "229adac5-2fa6-4839-af5f-912133b8755d",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CRED_ID",
+          "name": "Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Build BAS Checklist').item.json.accountantEmail }}",
+        "subject": "={{ 'BAS Gaps Found — ' + $('Build BAS Checklist').item.json.clientName + ' — ' + $('Build BAS Checklist').item.json.quarterLabel }}",
+        "message": "={{ '<p>Hi,</p><p>The BAS data for <strong>' + $('Build BAS Checklist').item.json.clientName + '</strong> (' + $('Build BAS Checklist').item.json.quarterLabel + ') has gaps that need attention before lodgement.</p><ul><li>Unreconciled bank transactions: <strong>' + $('Build BAS Checklist').item.json.unreconciledCount + '</strong></li><li>Items coded with no GST (unusual): <strong>' + $('Build BAS Checklist').item.json.unusualGSTCount + '</strong></li></ul><p>Please review and resolve these items in Xero before proceeding.</p>' }}",
+        "options": {}
+      },
+      "id": "gmail-04-gaps",
+      "name": "Email Accountant - Gaps Found",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2672,
+        752
+      ],
+      "webhookId": "6409932e-331f-4955-8137-5344015cf528",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CRED_ID",
+          "name": "Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-missing",
+              "leftValue": "={{ $('Build BAS Checklist').item.json.missingReceipts }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-04-missing",
+      "name": "Has Missing Client Items?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2896,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Build BAS Checklist').item.json.clientEmail }}",
+        "subject": "={{ 'Action required: Missing documents for your BAS — ' + $('Build BAS Checklist').item.json.quarterLabel }}",
+        "message": "={{ '<p>Dear ' + $('Build BAS Checklist').item.json.clientName + ',</p><p>We are preparing your BAS for <strong>' + $('Build BAS Checklist').item.json.quarterLabel + '</strong> and require some additional documents before we can proceed.</p><p>Please provide any outstanding receipts or invoices at your earliest convenience.</p><p>Kind regards,<br/>The Team</p>' }}",
+        "options": {}
+      },
+      "id": "gmail-04-client",
+      "name": "Email Client - Missing Items",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3120,
+        752
+      ],
+      "webhookId": "d1246d93-cf65-4ee6-8498-735e054ac9eb",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CRED_ID",
+          "name": "Gmail"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Quarterly BAS Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get BAS Client List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get BAS Client List": {
+      "main": [
+        [
+          {
+            "node": "Process Each Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Each Client": {
+      "main": [
+        [
+          {
+            "node": "Prepare Client Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Prepare Client Context": {
+      "main": [
+        [
+          {
+            "node": "Get BAS Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get BAS Report": {
+      "main": [
+        [
+          {
+            "node": "Get GST Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get GST Report": {
+      "main": [
+        [
+          {
+            "node": "Get Unreconciled Transactions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Unreconciled Transactions": {
+      "main": [
+        [
+          {
+            "node": "Check Suspicious GST Codes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Suspicious GST Codes": {
+      "main": [
+        [
+          {
+            "node": "Build BAS Checklist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build BAS Checklist": {
+      "main": [
+        [
+          {
+            "node": "Append to BAS Tracker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to BAS Tracker": {
+      "main": [
+        [
+          {
+            "node": "Ready for Review?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ready for Review?": {
+      "main": [
+        [
+          {
+            "node": "Email Accountant - Ready",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Email Accountant - Gaps Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Accountant - Ready": {
+      "main": [
+        [
+          {
+            "node": "Process Each Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Accountant - Gaps Found": {
+      "main": [
+        [
+          {
+            "node": "Has Missing Client Items?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Missing Client Items?": {
+      "main": [
+        [
+          {
+            "node": "Email Client - Missing Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process Each Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Client - Missing Items": {
+      "main": [
+        [
+          {
+            "node": "Process Each Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "53effa26-3a72-4020-a4c9-589cdca3448e",
+  "meta": {
+    "instanceId": "7ced4288e0a77f50a09c54c29f3347ae52e6300528ae434403d37065e9222860"
+  },
+  "id": "YegzMPqi0hvzNESY",
+  "tags": []
+}
