@@ -101,11 +101,6 @@ curl -X POST https://your-n8n-instance.com/api/v1/workflows/{id}/activate \
   -H "X-N8N-API-KEY: your-api-key"
 ```
 
-### Option C — Copy from n8n community templates
-
-Some of these workflows are published on the [n8n community workflows](https://n8n.io/workflows/) page. Search for "gimhana" or the workflow name.
-
----
 
 ## Replacing placeholder credentials
 
@@ -478,6 +473,5 @@ MIT License. Use these however you want. Attribution appreciated but not require
 
 Built by **Gimhana Wijethunga** — Computer Science student at Swinburne University, Melbourne. I build n8n automation workflows for accounting and bookkeeping firms.
 
-Website: [gimhana.dev](https://gimhana.dev)
-GitHub: [github.com/Scrappy911](https://github.com/Scrappy911)
+Website: [gimhana.dev](https://gimhana-dev.vercel.app/)
 Email: scrappynightmare@gmail.com
