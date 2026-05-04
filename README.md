@@ -2,7 +2,7 @@
 
 Backend automation workflows built on [n8n](https://n8n.io) for Australian accounting and bookkeeping firms. Open-source, self-hostable, designed for firms running Xero and MYOB.
 
-Built by [Gimhana Wijethunga](https://gimhana.dev) — CS student at Swinburne University, Melbourne.
+Built by [Gimhana Wijethunga](https://gimhana-dev.vercel.app/) — CS student at Swinburne University, Melbourne.
 
 ---
 
@@ -459,7 +459,7 @@ These workflows are open-source. If you build something useful on top of them or
 3. Commit your changes
 4. Push and open a PR
 
-If you've deployed one of these for a real firm and have feedback on what worked or didn't, I'd like to hear about it — open an issue or reach out via [gimhana.dev](https://gimhana.dev).
+If you've deployed one of these for a real firm and have feedback on what worked or didn't, I'd like to hear about it — open an issue or reach out via [gimhana.dev](https://gimhana-dev.vercel.app/).
 
 ---
 
